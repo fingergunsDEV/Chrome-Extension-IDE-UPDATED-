@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ExtensionBuilder IDE</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.7.1/dist/jszip.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/lib/codemirror.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/lib/codemirror.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/theme/material.css">
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/mode/javascript/javascript.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/mode/htmlmixed/htmlmixed.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/mode/css/css.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/mode/xml/xml.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/codemirror@5.65.5/mode/json/json.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: sans-serif; }
+    .file-tree { width: 250px; background: #f3f4f6; overflow-y: auto; }
+    .editor-pane { flex: 1; }
+    .toolbar button { margin-right: 0.5rem; }
+    .CodeMirror { height: calc(100vh - 4rem); }
+  </style>
+</head>
+<body class="flex h-screen">
+  <div class="file-tree p-4 border-r border-gray-300" id="fileTree">
+    <select id="manifestVersion" class="mb-2 text-sm w-full p-1">
+      <option value="2">Manifest v2</option>
+      <option value="3" selected>Manifest v3</option>
+    </select>
+    <button onclick="createFile()" class="mb-2 text-sm text-blue-600">+ Add File</button>
+    <ul id="filesList" class="text-sm"></ul>
+  </div>
+
+  <div class="editor-pane flex flex-col w-full">
+    <div class="toolbar p-2 border-b border-gray-300 bg-white flex items-center">
+      <input type="file" id="iconInput" accept="image/*" class="hidden" onchange="handleIconUpload(event)">
+      <button onclick="document.getElementById('iconInput').click()" class="btn">Upload Icon</button>
+      <button onclick="generateIcons()" class="btn">Generate Icons</button>
+      <button onclick="downloadZip()" class="btn">Download ZIP</button>
+    </div>
+    <div id="editorContainer" class="flex-1">
+      <textarea id="codeEditor"></textarea>
+    </div>
+  </div>
+
+  <script>
+    const templates = {
+      popupHtml: '<!DOCTYPE html>\n<html><body><h1>Popup</h1></body></html>',
+      popupJs: 'console.log("Popup script running");',
+      contentJs: 'console.log("Content script loaded");',
+      indexHtml: '<!DOCTYPE html>\n<html><body><h1>Extension Home</h1></body></html>',
+      serviceWorker: 'console.log("Service Worker active");',
+      configJs: 'export const CONFIG = { version: "1.0.0" };',
+    };
+
+    const manifestTemplates = {
+      2: '{\n  "manifest_version": 2,\n  "name": "My Extension",\n  "version": "1.0",\n  "browser_action": { "default_popup": "popup.html" },\n  "background": { "scripts": ["serviceworker.js"] },\n  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"] }],\n  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }\n}',
+      3: '{\n  "manifest_version": 3,\n  "name": "My Extension",\n  "version": "1.0",\n  "action": { "default_popup": "popup.html" },\n  "background": { "service_worker": "serviceworker.js" },\n  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"] }],\n  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }\n}'
+    };
+
+    let files = {
+      'manifest.json': manifestTemplates[3],
+      'popup.html': templates.popupHtml,
+      'popup.js': templates.popupJs,
+      'content.js': templates.contentJs,
+      'index.html': templates.indexHtml,
+      'serviceworker.js': templates.serviceWorker,
+      'config.js': templates.configJs
+    };
+
+    let currentFile = 'manifest.json';
+    const editor = CodeMirror.fromTextArea(document.getElementById('codeEditor'), {
+      mode: "application/json",
+      theme: "material",
+      lineNumbers: true,
+    });
+
+    document.getElementById('manifestVersion').addEventListener('change', (e) => {
+      const version = parseInt(e.target.value);
+      files['manifest.json'] = manifestTemplates[version];
+      if (currentFile === 'manifest.json') editor.setValue(files['manifest.json']);
+    });
+
+    function renderFileList() {
+      const list = document.getElementById('filesList');
+      list.innerHTML = '';
+      Object.keys(files).forEach(file => {
+        const li = document.createElement('li');
+        li.textContent = file;
+        li.className = "cursor-pointer hover:text-blue-600";
+        li.onclick = () => switchFile(file);
+        list.appendChild(li);
+      });
+    }
+
+    function switchFile(filename) {
+      files[currentFile] = editor.getValue();
+      currentFile = filename;
+      editor.setValue(files[filename]);
+    }
+
+    function createFile() {
+      const name = prompt("Enter file name:", "newfile.js");
+      if (name && !files[name]) {
+        files[name] = "";
+        renderFileList();
+      }
+    }
+
+    function handleIconUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+          ['16', '48', '128'].forEach(size => generateIcon(img, size));
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function generateIcon(img, size) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = parseInt(size);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          files[`icons/icon${size}.png`] = reader.result;
+        };
+        reader.readAsDataURL(blob);
+      }, 'image/png');
+    }
+
+    function generateIcons() {
+      alert('Please upload an image to generate icons.');
+    }
+
+    function downloadZip() {
+      files[currentFile] = editor.getValue();
+      const zip = new JSZip();
+      for (let path in files) {
+        if (files[path].startsWith('data:image/')) {
+          const base64 = files[path].split(',')[1];
+          zip.file(path, base64, { base64: true });
+        } else {
+          zip.file(path, files[path]);
+        }
+      }
+      zip.generateAsync({ type: 'blob' }).then(content => {
+        saveAs(content, `extension-${Date.now()}.zip`);
+      });
+    }
+
+    renderFileList();
+    editor.setValue(files[currentFile]);
+  </script>
+</body>
+</html>
